@@ -4,7 +4,6 @@ import std.stdio : writefln;
 import std.string : chomp;
 import std.traits : fullyQualifiedName, hasMember, moduleName, ParameterTypeTuple;
 
-
 extern (C) Object _d_newclass(const TypeInfo_Class ci);
 
 private immutable argumentSeparator = ", ";
@@ -33,11 +32,26 @@ private string generateGet(T)() {
 	return code;
 }
 
+unittest {
+   class Foo { } 
+   class Bar { 
+      this(Foo f) {
+         
+      }
+   } 
+
+   import std.stdio;
+   import unit_threaded;
+	string foo  = generateGet!Foo;
+	writelnUt(foo);
+   writeln("=== bar ==");
+   
+	writelnUt(generateGet!Bar);
+}
 
 interface Provider {
 	Object get();
 }
-
 
 class ClassProvider(T) : Provider {
 	private Dejector dej;
@@ -73,18 +87,15 @@ class InstanceProvider : Provider {
 	}
 }
 
-
 private struct Binding {
-	string key;
+	//string key;
 	Provider provider;
-	Scope scope_;
+	Scope resolutionScope;
 }
-
 
 interface Scope {
 	Object get(string key, Provider provider);
 }
-
 
 class NoScope : Scope {
 	Object get(string key, Provider provider) {
@@ -138,17 +149,24 @@ class Dejector {
 		this.bind!(Class, Class, ScopeClass);
 	}
 
+	void bind(Interface, Class, ScopeClass:Scope = NoScope)(string name) {
+		this.bind!(Interface, ScopeClass)(new ClassProvider!Class(this), name);
+   }
 	void bind(Interface, Class, ScopeClass:Scope = NoScope)() {
 		this.bind!(Interface, ScopeClass)(new ClassProvider!Class(this));
 	}
 
 	void bind(Interface, ScopeClass:Scope = NoScope)(Provider provider) {
-		immutable key = fullyQualifiedName!Interface;
+      this.bind!(Interface, ScopeClass)(provider, "");
+   }
+
+	void bind(Interface, ScopeClass:Scope = NoScope)(Provider provider, string name) {
+		immutable key = fullyQualifiedName!Interface  ~ name;
 		if(key in this.bindings) {
 			throw new Exception("Interface already bound");
 		}
-		auto scope_ = this.scopes[fullyQualifiedName!ScopeClass];
-		this.bindings[key] = Binding(key, provider, scope_);
+		auto resolutionScope = this.scopes[fullyQualifiedName!ScopeClass];
+		this.bindings[key] = Binding(provider, resolutionScope);
 	}
 
 	void bind(Interface, ScopeClass:Scope = NoScope)(Object delegate() provide) {
@@ -159,9 +177,41 @@ class Dejector {
 		this.bind!(Interface, ScopeClass)(toDelegate(provide));
 	}
 
-	Interface get(Interface)() {
-		auto binding = this.bindings[fullyQualifiedName!Interface];
-		immutable key = fullyQualifiedName!Interface;
-		return cast(Interface) binding.scope_.get(key, binding.provider);
-	}
+   Interface get(Interface)() {
+      static if(is(Interface t == I[], I)) {
+         I[] array = [get!I];
+         return array;
+      } else {
+         auto binding = this.bindings[fullyQualifiedName!Interface];
+         immutable key = fullyQualifiedName!Interface;
+         return cast(Interface) binding.resolutionScope.get(key, binding.provider);
+      }
+   }
+
+   Interface get(Interface)(string name) {
+      immutable key = fullyQualifiedName!Interface ~ name;
+      //auto binding = this.bindings[fullyQualifiedName!Interface ~ name];
+      auto binding = this.bindings[key];
+      return cast(Interface) binding.resolutionScope.get(key, binding.provider);
+   }
+   I delegate() getDelegate(I)() {
+      return delegate() { return this.get!I; };
+   }
 }
+   /*
+   template getter(T) {
+      static if(is(T t == I[], I)) {
+         I[] getter(I)() {
+            I[] array = [getter!I];
+            return array;
+         }
+      } else {
+         I getter(I)() {
+            auto binding = this.bindings[fullyQualifiedName!Interface];
+            immutable key = fullyQualifiedName!Interface;
+            return cast(Interface) binding.resolutionScope.get(key, binding.provider);
+         }
+      }
+   }
+*/
+
